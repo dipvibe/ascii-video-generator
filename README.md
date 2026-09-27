@@ -1,6 +1,6 @@
 # ASCII Video Generator
 
-Turn any video into ASCII art, played fullscreen with its original audio.
+Turn any video into ASCII art, played in a resizable window (or fullscreen) with its original audio.
 
 Built with Python, OpenCV, NumPy and Pillow.
 
@@ -28,7 +28,8 @@ Built with Python, OpenCV, NumPy and Pillow.
 
 ## Features
 
-- Plays any video as ASCII art in a fullscreen window
+- Plays any video as ASCII art in a resizable window, with fullscreen on the `F` key
+- The picture scales to fit the window, with letterboxing so it never stretches
 - Keeps the original aspect ratio, with a configurable output resolution (e.g. 1920 × 1080)
 - Audio playback in sync with the picture (via `ffplay`)
 - Clean, solid shadows and adjustable contrast (gamma, shadow cutoff)
@@ -45,7 +46,7 @@ input.mp4 ──┬── video frames ──► grayscale ──► shrink to c
             │                                                          glyph atlas (pre-drawn tiles)
             │                                                                        │
             │                                                                        ▼
-            │                                                           ASCII frame ──► fullscreen window
+            │                                                           ASCII frame ──► fit to window
             │
             └── audio track ──► ffplay (background) ──► speakers
 ```
@@ -55,7 +56,8 @@ input.mp4 ──┬── video frames ──► grayscale ──► shrink to c
 3. **Shrink** the frame so one pixel equals one character cell. The grid size is the output resolution divided by the font's cell size, so the aspect ratio is preserved.
 4. **Map brightness to characters** using a ramp like `" .:-=!*#$@"` (empty → dense). Pixels below `SHADOW_CUTOFF` become empty cells for clean shadows.
 5. **Render** using a glyph atlas: every character is drawn once at startup as a small tile, then NumPy picks and stitches thousands of tiles per frame in one operation.
-6. **Play** frames on a clock based on the video's FPS, while `ffplay` plays the audio in the background.
+6. **Fit** the ASCII frame to the current window size (keeping the aspect ratio, with background-colored bars on the sides if needed).
+7. **Play** frames on a clock based on the video's FPS, while `ffplay` plays the audio in the background.
 
 ---
 
@@ -163,7 +165,7 @@ python main.py
 What happens:
 
 1. Video info and grid size are printed in the terminal.
-2. A **fullscreen** window called **"ASCII Player"** opens and the video plays as ASCII art.
+2. A window called **"ASCII Player"** opens (`WINDOW_WIDTH` pixels wide, 1280 by default) and the video plays as ASCII art. Drag the edges to resize it, or press `F` for fullscreen.
 3. Audio starts at the same time (if `ffplay` is installed).
 4. When the video ends (or you quit), a short performance report is printed.
 
@@ -175,8 +177,12 @@ What happens:
 |---|---|
 | `q` | Quit |
 | `Esc` | Quit |
+| `f` | Toggle fullscreen on/off |
+| Window **X** button | Quit |
 
 > The window must have focus for the keys to work. Click on it if a key does nothing.
+>
+> Quitting in any of these ways also stops the audio and prints the performance report.
 
 ---
 
@@ -200,6 +206,11 @@ All settings are at the top of [`main.py`](main.py). Edit them and run the progr
 | `BRIGHTNESS` | `1.4` | Brightness boost in `"gray"` mode only |
 | `PLAY_AUDIO` | `True` | Set to `False` to play without sound |
 | `AV_SYNC_OFFSET` | `0.0` | Audio/video sync fix in seconds. Use a **positive** value if the sound is ahead of the picture, **negative** if it is behind |
+| `WINDOW_NAME` | `"ASCII Player"` | Title of the playback window |
+| `START_FULLSCREEN` | `False` | Set to `True` to start in fullscreen. You can still press `F` to switch back |
+| `WINDOW_WIDTH` | `1280` | Starting width of the window in pixels. The height is set from the video's aspect ratio |
+
+> `OUTPUT_WIDTH` controls how many characters are drawn (the detail). `WINDOW_WIDTH` only controls how big the window is on screen. The ASCII image is scaled to fit whatever size the window is.
 
 ### Example presets
 
@@ -260,7 +271,8 @@ Played in      : 30.04 s (video 30.00 s)
 - **High-contrast videos look best**: silhouettes, strong lighting, black-and-white animation.
 - **Too many characters in dark areas?** Raise `SHADOW_CUTOFF` (80–120) or `GAMMA` (1.3–1.6).
 - **Want finer detail?** Lower `FONT_SIZE` to 8.
-- **Different monitor?** Set `OUTPUT_WIDTH` to your screen width (2560 for 1440p, 3840 for 4K).
+- **Blurry text in fullscreen?** The image is scaled up when the window is bigger than `OUTPUT_WIDTH`. Set `OUTPUT_WIDTH` to your screen width (1920 for 1080p, 2560 for 1440p, 3840 for 4K) for sharp characters.
+- **Window too big or small at start?** Change `WINDOW_WIDTH`, or set `START_FULLSCREEN = True`.
 - **Use videos you have the right to use**, especially if you share the output publicly.
 
 ---
@@ -280,7 +292,9 @@ Played in      : 30.04 s (video 30.00 s)
 | Audio and video are out of sync | Adjust `AV_SYNC_OFFSET` (e.g. `0.2` or `-0.2`) |
 | Playback is slow / choppy | Increase `FONT_SIZE`, lower `OUTPUT_WIDTH` (e.g. `1280`), or use the short default `RAMP` |
 | Image is too dark / too noisy | Lower `GAMMA` (e.g. `0.8`) to brighten, or raise `SHADOW_CUTOFF` to remove noise |
-| Can't exit fullscreen | Click the window, then press `q` or `Esc` |
+| Can't exit fullscreen | Click the window, then press `f` to go back to a window, or `q` / `Esc` to quit |
+| Characters look blurry or smeared | The window is bigger than `OUTPUT_WIDTH`, so the image is being stretched. Raise `OUTPUT_WIDTH` to match your screen width |
+| Window opens off-screen or too large | Lower `WINDOW_WIDTH` (e.g. `960`) |
 
 ---
 
@@ -303,7 +317,8 @@ ascii-video-generator/
 - [x] Grayscale + character grid
 - [x] Brightness to character mapping
 - [x] Fast rendering with a glyph atlas
-- [x] Fullscreen playback with audio
+- [x] Playback with audio
+- [x] Resizable window with fullscreen toggle
 - [ ] Export to `output.mp4` with audio
 - [ ] Command-line arguments (input file, font size, output width)
 - [ ] Edge-detection mode

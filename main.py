@@ -16,12 +16,15 @@ BACKGROUND = 30              # background gray (0 = black)
 FOREGROUND = 220             # character color in "white" mode
 SHADOW_CUTOFF = 60           # darker than this = empty cell
 FONT_PATH = "consola.ttf"
-FONT_SIZE = 10              
-OUTPUT_WIDTH = 1920          
+FONT_SIZE = 10
+OUTPUT_WIDTH = 1920
 GAMMA = 1.0                  # <1 brighter, >1 darker midtones
 BRIGHTNESS = 1.4             # "gray" mode boost
 PLAY_AUDIO = True
 AV_SYNC_OFFSET = 0.0         # seconds; + if sound is ahead, - if behind
+WINDOW_NAME = "ASCII Player"
+START_FULLSCREEN = False     # F toggles fullscreen while playing
+WINDOW_WIDTH = 1280          # starting window width
 if INVERT:
     RAMP = RAMP[::-1]
 space_index = RAMP.index(" ")
@@ -82,9 +85,13 @@ print(f"Output frame : {out_w} x {out_h} px")
 # Gamma lookup table
 lookup = np.round(((np.arange(256) / 255.0) ** GAMMA) * 255).astype(np.uint8)
 
-#Window
-cv2.namedWindow("ASCII Player", cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
-cv2.setWindowProperty("ASCII Player", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+#Window (normal, resizable, starts at WINDOW_WIDTH)
+cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+cv2.resizeWindow(WINDOW_NAME, WINDOW_WIDTH, int(WINDOW_WIDTH * out_h / out_w))
+
+fullscreen = START_FULLSCREEN
+if fullscreen:
+    cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
 
 def render_ascii(frame):
@@ -97,7 +104,7 @@ def render_ascii(frame):
     indices = (small_gray.astype(np.int32) * (len(RAMP) - 1)) // 255
     indices[small_gray < SHADOW_CUTOFF] = space_index    # clean shadows
 
-    tiles = atlas[indices] 
+    tiles = atlas[indices]
 
     if SHADE_MODE == "gray":
         ink = np.clip(small_gray.astype(np.float32) * BRIGHTNESS, 0, 255)
@@ -114,6 +121,27 @@ def render_ascii(frame):
     canvas[offset_y:offset_y + ascii_h, offset_x:offset_x + ascii_w] = img
 
     return cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR)
+
+
+def fit_to_window(img):
+    """Scale img to the current window size, keeping aspect ratio."""
+    _, _, win_w, win_h = cv2.getWindowImageRect(WINDOW_NAME)
+    if win_w <= 0 or win_h <= 0:
+        return img
+
+    scale = min(win_w / out_w, win_h / out_h)
+    new_w = max(1, int(out_w * scale))
+    new_h = max(1, int(out_h * scale))
+
+    interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR   # sharper when shrinking
+    resized = cv2.resize(img, (new_w, new_h), interpolation=interp)
+
+    # Center on a background-colored canvas (letterbox)
+    canvas = np.full((win_h, win_w, 3), BACKGROUND, dtype=np.uint8)
+    x = (win_w - new_w) // 2
+    y = (win_h - new_h) // 2
+    canvas[y:y + new_h, x:x + new_w] = resized
+    return canvas
 
 
 def start_audio(path):
@@ -142,14 +170,26 @@ while True:
     if not ret:
         break
 
-    cv2.imshow("ASCII Player", render_ascii(frame))
+    cv2.imshow(WINDOW_NAME, fit_to_window(render_ascii(frame)))
 
     total_processing_time += time.perf_counter() - start_time
     next_frame_time = playback_start + (frame_count + 1) / fps
     delay = max(1, int((next_frame_time - time.perf_counter()) * 1000))
 
     key = cv2.waitKey(delay) & 0xFF
+
+    # Q or Esc to quit
     if key in (ord("q"), 27):
+        break
+
+    # F to toggle fullscreen
+    if key == ord("f"):
+        fullscreen = not fullscreen
+        mode = cv2.WINDOW_FULLSCREEN if fullscreen else cv2.WINDOW_NORMAL
+        cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_FULLSCREEN, mode)
+
+    # Window closed with the X button
+    if cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:
         break
 
     frame_count += 1
