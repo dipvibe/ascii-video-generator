@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Media files (too large for the repo)
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.gif
+output/
