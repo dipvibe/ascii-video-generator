@@ -1,49 +1,173 @@
-import cv2 
+import shutil
+import subprocess
+import time
 
-VIDEO_PATH= "input.mp4"
-COLS= 100
-CHAR_ASPECT=0.5
+import cv2
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 
+#Settings
+VIDEO_PATH = "input.mp4"
+RAMP = " .:-=!*#$@"          # dark -> bright
+# RAMP = " .'`^\",:;Il!i~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"
+INVERT = False               # flip the ramp
+SHADE_MODE = "white"         # "white" = flat color, "gray" = shaded by brightness
+BACKGROUND = 30              # background gray (0 = black)
+FOREGROUND = 220             # character color in "white" mode
+SHADOW_CUTOFF = 60           # darker than this = empty cell
+FONT_PATH = "consola.ttf"
+FONT_SIZE = 10              
+OUTPUT_WIDTH = 1920          
+GAMMA = 1.0                  # <1 brighter, >1 darker midtones
+BRIGHTNESS = 1.4             # "gray" mode boost
+PLAY_AUDIO = True
+AV_SYNC_OFFSET = 0.0         # seconds; + if sound is ahead, - if behind
+if INVERT:
+    RAMP = RAMP[::-1]
+space_index = RAMP.index(" ")
+
+# Open video
 cap = cv2.VideoCapture(VIDEO_PATH)
 
 if not cap.isOpened():
     print(f"Error: could not open {VIDEO_PATH}")
     exit()
 
-fps= cap.get(cv2.CAP_PROP_FPS)
-width= int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-height= int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+fps = cap.get(cv2.CAP_PROP_FPS)
+width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+if fps <= 0:
+    print("Error: invalid FPS")
+    exit()
 
 print(f"FPS          : {fps}")
 print(f"Resolution   : {width} x {height}")
-print(f"Frame count  : {total_frames} (reported)")
-print(f"Duration     : {total_frames / fps:.2f} seconds")
+print(f"Frame count  : {total_frames}")
 
-rows=int(COLS* (height/width)*CHAR_ASPECT)
-print(f"ASCII grid: {COLS} x {rows} character")
+#Glyph atlas
+font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
 
-frame_count=0
+cell_w = int(round(font.getlength("@")))
+ascent, descent = font.getmetrics()
+cell_h = ascent + descent
+
+atlas = np.zeros((len(RAMP), cell_h, cell_w), dtype=np.float32)
+for i, ch in enumerate(RAMP):
+    tile = Image.new("L", (cell_w, cell_h), color=0)
+    ImageDraw.Draw(tile).text((0, 0), ch, fill=255, font=font)
+    atlas[i] = np.array(tile, dtype=np.float32) / 255.0   # 0 = empty, 1 = ink
+
+#Output size
+if OUTPUT_WIDTH is None:
+    out_w, out_h = width, height
+else:
+    out_w = OUTPUT_WIDTH
+    out_h = int(round(OUTPUT_WIDTH * height / width))   # keep aspect ratio
+
+cols = out_w // cell_w
+rows = out_h // cell_h
+ascii_w = cols * cell_w
+ascii_h = rows * cell_h
+
+# Center the grid if it doesn't fill the frame exactly
+offset_x = (out_w - ascii_w) // 2
+offset_y = (out_h - ascii_h) // 2
+
+print(f"Cell size    : {cell_w} x {cell_h} px")
+print(f"ASCII grid   : {cols} x {rows} chars")
+print(f"Output frame : {out_w} x {out_h} px")
+
+# Gamma lookup table
+lookup = np.round(((np.arange(256) / 255.0) ** GAMMA) * 255).astype(np.uint8)
+
+#Window
+cv2.namedWindow("ASCII Player", cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+cv2.setWindowProperty("ASCII Player", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
+
+def render_ascii(frame):
+    """Frame -> ASCII frame (out_w x out_h, BGR)."""
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    gray = cv2.LUT(gray, lookup)
+
+    small_gray = cv2.resize(gray, (cols, rows), interpolation=cv2.INTER_AREA)
+
+    indices = (small_gray.astype(np.int32) * (len(RAMP) - 1)) // 255
+    indices[small_gray < SHADOW_CUTOFF] = space_index    # clean shadows
+
+    tiles = atlas[indices] 
+
+    if SHADE_MODE == "gray":
+        ink = np.clip(small_gray.astype(np.float32) * BRIGHTNESS, 0, 255)
+        ink = ink[:, :, None, None]
+    else:
+        ink = float(FOREGROUND)
+
+    cells = BACKGROUND + tiles * (ink - BACKGROUND)
+    cells = np.clip(cells, 0, 255).astype(np.uint8)
+
+    img = cells.transpose(0, 2, 1, 3).reshape(ascii_h, ascii_w)
+
+    canvas = np.full((out_h, out_w), BACKGROUND, dtype=np.uint8)
+    canvas[offset_y:offset_y + ascii_h, offset_x:offset_x + ascii_w] = img
+
+    return cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR)
+
+
+def start_audio(path):
+    """Play audio with ffplay in the background."""
+    if not shutil.which("ffplay"):
+        print("ffplay not found, no audio")
+        return None
+
+    return subprocess.Popen(
+        ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path],
+        stdin=subprocess.DEVNULL,
+    )
+
+
+#Playback
+frame_count = 0
+total_processing_time = 0
+
+audio = start_audio(VIDEO_PATH) if PLAY_AUDIO else None
+playback_start = time.perf_counter() + AV_SYNC_OFFSET
 
 while True:
+    start_time = time.perf_counter()
+
     ret, frame = cap.read()
     if not ret:
         break
 
-    gray=cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
-    small=cv2.resize(gray,(COLS,rows), interpolation=cv2.INTER_AREA)
+    cv2.imshow("ASCII Player", render_ascii(frame))
 
-    if frame_count==0:
-       print(f"First frame shape : {frame.shape}")
-       print(f"Grayscale shape   : {gray.shape}")
-       print(f"Small shape       : {small.shape}")
-       print(f"Brightness range  : {small.min()} to {small.max()}")
+    total_processing_time += time.perf_counter() - start_time
+    next_frame_time = playback_start + (frame_count + 1) / fps
+    delay = max(1, int((next_frame_time - time.perf_counter()) * 1000))
 
-       preview = cv2.resize(small, (width, height), interpolation=cv2.INTER_NEAREST)
-       cv2.imwrite("preview_grid.png", preview)
-    frame_count+=1
+    key = cv2.waitKey(delay) & 0xFF
+    if key in (ord("q"), 27):
+        break
 
+    frame_count += 1
 
-print(f"Frames read  : {frame_count} (actual)")
+# Stop audio on exit
+if audio is not None and audio.poll() is None:
+    audio.terminate()
+
+# Report
+elapsed = time.perf_counter() - playback_start
+
+if frame_count > 0:
+    avg_time = total_processing_time / frame_count
+    print(f"Avg processing : {avg_time * 1000:.2f} ms")
+    print(f"Max FPS        : {1 / avg_time:.2f}")
+
+print(f"Frames shown   : {frame_count}")
+print(f"Played in      : {elapsed:.2f} s (video {total_frames / fps:.2f} s)")
 
 cap.release()
+cv2.destroyAllWindows()

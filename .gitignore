@@ -223,4 +223,5 @@ __marimo__/
 *.mov
 *.mkv
 *.gif
+*.png
 output/
