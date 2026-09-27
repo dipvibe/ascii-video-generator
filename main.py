@@ -1,6 +1,8 @@
 import cv2 
 
 VIDEO_PATH= "input.mp4"
+COLS= 100
+CHAR_ASPECT=0.5
 
 cap = cv2.VideoCapture(VIDEO_PATH)
 
@@ -18,6 +20,9 @@ print(f"Resolution   : {width} x {height}")
 print(f"Frame count  : {total_frames} (reported)")
 print(f"Duration     : {total_frames / fps:.2f} seconds")
 
+rows=int(COLS* (height/width)*CHAR_ASPECT)
+print(f"ASCII grid: {COLS} x {rows} character")
+
 frame_count=0
 
 while True:
@@ -25,9 +30,17 @@ while True:
     if not ret:
         break
 
-    if frame_count==0:
-        print(f"first frame shape:{frame.shape}")
+    gray=cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
+    small=cv2.resize(gray,(COLS,rows), interpolation=cv2.INTER_AREA)
 
+    if frame_count==0:
+       print(f"First frame shape : {frame.shape}")
+       print(f"Grayscale shape   : {gray.shape}")
+       print(f"Small shape       : {small.shape}")
+       print(f"Brightness range  : {small.min()} to {small.max()}")
+
+       preview = cv2.resize(small, (width, height), interpolation=cv2.INTER_NEAREST)
+       cv2.imwrite("preview_grid.png", preview)
     frame_count+=1
 
 
