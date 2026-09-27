@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 #Settings
-VIDEO_PATH = "input.mp4"
+VIDEO_PATH = "add_your_video_here"
 RAMP = " .:-=!*#$@"          # dark -> bright
 # RAMP = " .'`^\",:;Il!i~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"
 INVERT = False               # flip the ramp
@@ -144,6 +144,26 @@ def fit_to_window(img):
     return canvas
 
 
+def keep_window_ratio(last_size):
+    """If the user resized the window, snap it back to the video's aspect ratio."""
+    _, _, win_w, win_h = cv2.getWindowImageRect(WINDOW_NAME)
+    if win_w <= 0 or win_h <= 0 or (win_w, win_h) == last_size:
+        return last_size
+
+    last_w, last_h = last_size
+
+    # Follow whichever side the user changed more
+    if abs(win_w - last_w) >= abs(win_h - last_h):
+        new_w, new_h = win_w, round(win_w * out_h / out_w)
+    else:
+        new_w, new_h = round(win_h * out_w / out_h), win_h
+
+    if (new_w, new_h) != (win_w, win_h):
+        cv2.resizeWindow(WINDOW_NAME, new_w, new_h)
+
+    return (new_w, new_h)
+
+
 def start_audio(path):
     """Play audio with ffplay in the background."""
     if not shutil.which("ffplay"):
@@ -162,6 +182,8 @@ total_processing_time = 0
 
 audio = start_audio(VIDEO_PATH) if PLAY_AUDIO else None
 playback_start = time.perf_counter() + AV_SYNC_OFFSET
+
+last_size = (WINDOW_WIDTH, int(WINDOW_WIDTH * out_h / out_w))   # window size we last set
 
 while True:
     start_time = time.perf_counter()
@@ -187,10 +209,16 @@ while True:
         fullscreen = not fullscreen
         mode = cv2.WINDOW_FULLSCREEN if fullscreen else cv2.WINDOW_NORMAL
         cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_FULLSCREEN, mode)
+        if not fullscreen:
+            cv2.resizeWindow(WINDOW_NAME, *last_size)   # back to the last window size
 
     # Window closed with the X button
     if cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:
         break
+
+    # Keep the window at the video's aspect ratio while resizing
+    if not fullscreen:
+        last_size = keep_window_ratio(last_size)
 
     frame_count += 1
 
